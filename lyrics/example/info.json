@@ -1,9 +1,9 @@
 {
   "apiVersion": 1,
-  "name": "波浪示例",
+  "name": "基础示例",
   "author": "QueMusic",
-  "version": "1.0.0",
-  "description": "官方示例：着色器波浪背景 + 逐字高亮 + 双语翻译",
+  "version": "1.1.0",
+  "description": "左封面+歌名歌手，右侧歌词列表：注入契约、逐字高亮与翻译的最小实现",
   "entry": "example.qml",
   "preview": "info.png"
 }

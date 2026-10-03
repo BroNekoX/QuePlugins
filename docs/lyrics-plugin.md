@@ -1,29 +1,28 @@
 # 歌词界面插件规范（apiVersion 1）
 
-歌词界面插件用 QML 写：**一个文件夹就是一个插件**，文件夹名即插件 id。
-宿主在进入沉浸播放页时用 `Loader` 加载插件的入口 QML，并把播放进度、歌词数据、配色等
-按下面的契约注入进来，因此插件不需要（也不应该）访问应用内部接口。
+一个文件夹就是一套歌词界面，文件夹名即插件 id。宿主在进入沉浸播放页时用 `Loader` 加载入口 QML，
+按下表注入数据；插件只负责渲染，不需要（也不应该）访问应用内部接口。
 
-## 1. 目录结构
+## 目录结构
 
 ```
-lyrics/example/               文件夹名 = 插件 id（只用小写字母、数字、- 和 _）
-  info.json                   插件信息，必要
-  example.qml                 入口 QML，必要（文件名在 info.json 的 entry 里指定）
-  info.png                    预览图，建议 16:9 或 1:1，列表与切换面板显示
-  shaders/wave.frag           自定义着色器，可选
-  resources/…                 其它随插件分发的资源
+lyrics/example/
+  info.json            插件信息，必要
+  example.qml          入口 QML，必要（文件名写在 info.json 的 entry 里）
+  info.png             预览图，建议（列表与切换面板显示）
+  shaders/*.frag(.qsb) 自定义着色器，可选
+  resources/…          其它随插件分发的资源
 ```
 
-## 2. info.json
+## info.json
 
 ```json
 {
   "apiVersion": 1,
-  "name": "波浪示例",
+  "name": "基础示例",
   "author": "QueMusic",
-  "version": "1.0.0",
-  "description": "着色器波浪背景 + 逐字高亮 + 双语翻译",
+  "version": "1.1.0",
+  "description": "左封面 + 右歌词列表",
   "entry": "example.qml",
   "preview": "info.png"
 }
@@ -31,49 +30,49 @@ lyrics/example/               文件夹名 = 插件 id（只用小写字母、�
 
 | 字段 | 必要 | 说明 |
 | --- | --- | --- |
-| `apiVersion` | 否 | 契约版本，当前只支持 `1`（缺省按 1 处理）；不匹配的插件会被跳过 |
+| `apiVersion` | 否 | 当前只支持 `1`（缺省按 1 处理）；不匹配的插件会被跳过 |
 | `name` | 建议 | 显示名，缺省用文件夹名 |
+| `entry` / `preview` | 否 | 缺省 `plugin.qml` / `info.png` |
 | `author` / `version` / `description` | 否 | 设置页与切换面板展示用 |
-| `entry` | 否 | 入口 QML 文件名，缺省 `plugin.qml` |
-| `preview` | 否 | 预览图文件名，缺省 `info.png` |
 
-入口文件不存在、或 `info.json` 解析失败时，插件会被忽略（不会让应用启动失败）。
+`info.json` 解析失败或入口文件不存在时插件被直接忽略，不会影响应用启动。
 
-## 3. 入口 QML 契约
+## 入口契约
 
-入口根类型必须是 `Item`。**只要写成同名属性，宿主就会自动绑定**；没写的属性自动跳过，
-所以插件可以只实现自己需要的部分。
+根类型是 `Item`（本身就是界面）。**写同名属性就会被注入**，没写的自动跳过，所以只声明用得上的：
 
 ```qml
 import QtQuick
 
 Item {
-    // ---- 播放状态 ----
-    property real position          // 当前播放位置（毫秒）
-    property bool playing           // 是否正在播放
-    property bool mediaActive       // 是否有媒体
-    property real playbackRate      // 倍速
+    // 播放
+    property real position          // 进度 ms
+    property bool playing
+    property bool mediaActive
+    property real playbackRate
 
-    // ---- 歌词数据 ----
-    property var  lyricsModel       // 歌词行列表，见 §4
-    property var  translateModel    // 翻译行列表，见 §4
-    property int  currentIndex      // 当前行下标（宿主持有，跟着进度走）
-    property int  lyricMove         // 用户设置的位置校准（毫秒），已含在宿主的 currentIndex 里
+    // 歌词
+    property var  lyricsModel       // 见「歌词数据」
+    property var  translateModel    // 与歌词同下标，无翻译时为空数组
+    property int  currentIndex      // 当前行下标（宿主持有）
+    property int  lyricMove         // 用户的位置校准 ms
 
-    // ---- 歌曲信息 ----
+    // 歌曲
     property string title
     property string artist
-    property url    coverUrl
+    property string coverUrl        // 可直接显示的 URL
 
-    // ---- 外观 ----
-    property color mainColor        // 封面取色，主题主色
+    // 外观
+    property color mainColor        // 封面取色（三主色）
     property color secondColor
     property color thirdColor
-    property int   lyricSize        // 用户在「标准歌词大小」里的取值 0..20
-    property int   hideHeight       // 沉浸模式收起控件时为 76，否则 0（用于让出空间）
+    property int   lyricSize        // 「标准歌词大小」0..20
+    property int   hideHeight       // 沉浸模式收起控件时为 76，否则 0
     property bool  openTranslate    // 用户是否打开翻译
-    property bool  basicCd          // 黑胶/封面卡片开关（宿主状态）
-    property int   lyricType        // 0=默认 1=封面 2=歌词（宿主状态）
+
+    // 宿主状态：只读使用即可，要改走 requestStyle
+    property bool basicCd           // 黑胶 / 封面卡片
+    property int  lyricType         // 0=默认 1=封面 2=歌词
 }
 ```
 
@@ -81,97 +80,55 @@ Item {
 
 | 成员 | 说明 |
 | --- | --- |
-| `function timerFunction()` | 宿主约每 320ms 调用一次；用于推进自定义动画 |
-| `function requestStyle(key, value)` | 请求宿主改样式。白名单：`premiumLyricAnime`、`waveDisplay`（0/1 布尔）、`basicCd`、`lyricType` |
-| `property Component styleOptions` | 在播放页「播放器样式」弹窗里追加的选项区域 |
+| `function timerFunction()` | 宿主约每 320ms 调一次，用来推进自定义动画（不要自己起定时器） |
+| `property var requestStyle` | 宿主注入的回调；包一层 `function request(k, v) { if (requestStyle) requestStyle(k, v) }` 更好用 |
+| `property Component styleOptions` | 追加到播放页「播放器样式」弹窗里的选项区 |
 
-> 样式**不要**直接改 `Style.settings`，一律走 `requestStyle()`，宿主会做白名单与范围校验。
+`requestStyle(key, value)` 的键是白名单：`basicCd`（黑胶开关）、`lyricType`（0/1/2）、
+`premiumLyricAnime`、`waveDisplay`（0/1）。未登记的键会被忽略，**不要直接写 `Style.settings`**。
 
-## 4. 歌词数据
-
-`lyricsModel` 每一项：
+## 歌词数据
 
 ```js
-{ time: 14290, text: "迷い間違い 進めない日々", info: [ { time: 14290, text: "迷" }, … ], isOther: false }
+{ time: 14290, text: "迷い間違い 進めない日々",
+  info: [ { time: 14290, text: "迷" }, … ], isOther: false }
 ```
 
-- `time`：该行开始时间（毫秒），列表已按时间升序
-- `info`：**逐字/逐词时间轴**，可为空数组。有它就能做卡拉 OK 逐字高亮（见示例的 `lineHtml()`）
-- `isOther`：true 表示是元信息行（作词/作曲等），可以弱化显示
+- 列表已按时间升序；`info` 是逐字/逐词时间轴，可为空数组，有它才能做卡拉 OK 高亮
+- `isOther` 为 true 表示作词/作曲这类元信息行，建议弱化显示
+- `translateModel[i]` 与 `lyricsModel[i]` 对应，每项 `{ time, text }`
 
-`translateModel` 每一项 `{ time, text }`，与 `lyricsModel` 同下标对应；没有翻译时为空数组。
+## 着色器（可选）
 
-## 5. 着色器
+放在插件目录里，用相对路径引用即可。**必须预编译成 `.qsb`** —— Qt 6 不会在运行时编译 `.frag`
+（会报 `Failed to deserialize QShader` 且效果静默消失，界面照常显示只是没有背景）：
 
-着色器文件放在插件目录里，用**相对路径**引用即可（QML 会相对入口文件解析）：
-
-```qml
-ShaderEffect {
-    anchors.fill: parent
-    property color    uColorA: mainColor
-    property color    uColorB: secondColor
-    property color    uColorC: thirdColor
-    property vector2d uResolution: Qt.vector2d(width, height)
-    property real     uTime: 0
-    NumberAnimation on uTime { from: 0; to: 1000; duration: 1000000; loops: Animation.Infinite }
-    fragmentShader: "shaders/wave.frag"
-}
+```bash
+qsb --glsl "100 es,120,150,300 es,310 es,320 es" --hlsl 50 --msl 12 \
+    -o shaders/wave.frag.qsb shaders/wave.frag
 ```
 
-- 顶点着色器可直接省略（用 Qt 默认的）。
-- 片元着色器写法（Qt 6 规范）：
+QML 侧 `property color` 对应着色器里的 `vec4`，`property vector2d` 对应 `vec2`；
+`layout(std140, binding = 0) uniform buf` 里 `qt_Matrix` 与 `qt_Opacity` 必须保留。
+着色器只画背景，不要做全屏模糊或多重离屏渲染，中低端机器容易掉帧。
 
-```glsl
-#version 450 core
-layout(location = 0) in vec2 qt_TexCoord0;
+## 性能与行为
 
-layout(std140, binding = 0) uniform buf {
-    mat4 qt_Matrix;      // 必须
-    float qt_Opacity;    // 必须
-    vec4 uColorA;        // 之后按名字对应 QML 里的 property
-    vec2 uResolution;
-    float uTime;
-};
+- 页面隐藏时宿主会卸载插件，再次进入重新加载：**关键状态别只留在插件里**
+- `currentIndex` 与 `position` 由宿主维护，插件只做显示，不要自己扫描歌词列表
+- 逐字高亮只对当前行做（示例用富文本生成当前行），其余行保持纯文本
+- 用 `ListView` / `Repeater` 时开 `reuseItems`，避免每帧创建对象
 
-layout(location = 0) out vec4 fragColor;
-```
+## 调试
 
-- **建议**：直接提交 `.frag` 源文件即可（Qt 会在运行时编译）。若你的 Qt 环境不支持运行时编译，
-  可以预编译一份：`qsb --qt6 shaders/wave.frag -o shaders/wave.frag.qsb`
-  ```qml
-  fragmentShader: "shaders/wave.frag.qsb"
-  ```
-- 颜色是 `vec4`，QML 里对应 `property color`；`uResolution` 用 `property vector2d`。
-- 着色器只画背景：别做全屏模糊/多重 ShaderEffectSource，中低端机器容易掉帧。
+把插件文件夹放到可执行文件同级的 `plugins/lyrics/` 下，改完点设置页的「重新扫描」即可看到；
+入口报错时插件不会被选中，应用仍能正常启动。
 
-## 6. 资源与 API
-
-- 相对路径（图片、着色器、JS）按入口 QML 所在目录解析，插件应当自包含。
-- 可以 `import QueMusic 1.0` 使用公开单例：`Style`（主题与设置）、`Playback`（播放列表/播放控制）、
-  `MusicApi`（歌词接口）、`QueMusicConfig` 等；这些是公开接口，跨版本尽量兼容。
-- **不要**依赖应用内部的局部 `id`、上下文属性或 `components/` 里的私有组件（不同版本可能改名或消失）。
-- 插件是 QML，理论上能做任何 QML 能做的事（网络、写文件），因此**只安装可信插件**。
-
-## 7. 生命周期与性能
-
-- 沉浸播放页隐藏（或退出）时，宿主会卸载插件；再次进入重新加载，所以**不要**把关键状态只存在插件里，
-  需要持久化的设置用 `requestStyle()` 交给宿主。
-- `currentIndex` 与 `position` 已经由宿主维护，插件只做「显示」，不要自己扫描歌词列表。
-- 逐字高亮请只对**当前行**做（示例用富文本一次性生成当前行 HTML），不要给每行都建一堆 `Text`。
-- 行内容用 `ListView`/`Repeater` 时开启 `reuseItems` 或复用绑定，避免每帧创建对象。
-- 插件里不要跑定时器轮询播放进度，用注入的 `position` 绑定即可。
-
-## 8. 调试
-
-1. 直接把插件文件夹放到**可执行文件同级**的 `plugins/lyrics/` 下，改完点设置页的「重新扫描」即可看到。
-2. 运行应用的终端里会打印 QML 错误；入口报错时插件不会被选中，应用仍可正常启动。
-3. 建议在插件里先只放一个 `Rectangle` 打通链路，再逐步加效果。
-
-## 9. 提交检查清单
+## 提交检查清单
 
 - [ ] `info.json` 有 `name`，`apiVersion` 为 1
-- [ ] 入口 QML 根类型是 `Item`，只声明自己需要的注入属性
-- [ ] `info.png` 预览图（建议 800×450 以内，别超过 300 KB）
-- [ ] 在 1080p 与 2K 分辨率下都看过：不遮挡宿主左上角按钮、不吃满 CPU
-- [ ] 不使用应用内部私有接口（只 `import QueMusic 1.0` 的公开单例）
-- [ ] 附带一张运行截图
+- [ ] 根类型是 `Item`，只声明自己需要的注入属性
+- [ ] `info.png` 预览图（建议 800×450 内，别超过 300 KB）
+- [ ] 1080p 与 2K 下都看过：不遮挡宿主控件、不吃满 CPU
+- [ ] 只 `import QtQuick`，或 `import QueMusic 1.0` 使用公开单例，不碰应用内部私有接口
+- [ ] 附一张运行截图

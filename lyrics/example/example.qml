@@ -1,161 +1,209 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// QueMusic 歌词界面插件示例
-// 要点：只 import QtQuick；宿主注入的属性写成同名属性即可；资源（着色器）用相对路径。
+// QueMusic 歌词界面插件 · 基础示例
+// 布局：左侧封面 + 歌曲名 / 歌手名，右侧歌词列表（ListView，当前行居中、放大并逐字高亮）。
+// 只 import QtQuick —— 把宿主注入的属性写成同名属性即可，不依赖宿主内部实现。
+pragma ComponentBehavior: Bound
+
 import QtQuick
+import QtQuick.Effects
 
 Item {
     id: root
 
-    // ---------- 宿主注入（只需要写自己用得上的）----------
-    property var lyricsModel: []          // 歌词行：{ time, text, info, isOther }
-    property var translateModel: []       // 翻译行：{ time, text }，与歌词同下标
-    property int currentIndex: 0          // 当前行下标（宿主持有）
-    property real position: 0             // 播放位置(ms)
-    property bool playing: false
+    // ---------- 宿主注入（只写自己用得上的）----------
+    property real position: 0            // 播放进度 ms
+    property var lyricsModel: []         // { time, text, info, isOther }
+    property var translateModel: []      // { time, text }，与歌词同下标
+    property int currentIndex: 0         // 当前行下标（宿主持有）
+    property int lyricMove: 0            // 用户的位置校准 ms
+    property bool openTranslate: true
     property string title: ""
     property string artist: ""
-    property color mainColor: "#00ee66"   // 封面取色
+    property string coverUrl: ""
+    property color mainColor: "#00ee66"
     property color secondColor: "#00b1ee"
     property color thirdColor: "#9d4edd"
-    property int lyricSize: 10            // 「标准歌词大小」0..20
-    property int lyricMove: 0             // 用户的位置校准(ms)
-    property int hideHeight: 0            // 沉浸模式收起控件时为 76
-    property bool openTranslate: true
+    property int lyricSize: 10           // 「标准歌词大小」0..20
 
-    // ---------- 派生数据 ----------
-    readonly property int fontSize: 30 + lyricSize * 2
-    readonly property real lyricPos: position + lyricMove
-    readonly property var current: (currentIndex >= 0 && currentIndex < lyricsModel.length)
-                                   ? lyricsModel[currentIndex] : null
-    readonly property string prevText: currentIndex > 0 ? (lyricsModel[currentIndex - 1].text || "") : ""
-    readonly property string nextText: currentIndex + 1 < lyricsModel.length
-                                       ? (lyricsModel[currentIndex + 1].text || "") : ""
-    readonly property string translateText: {
-        const item = (currentIndex >= 0 && currentIndex < translateModel.length)
-                     ? translateModel[currentIndex] : null;
-        return item && item.text ? item.text : "";
+    // ---------- 派生 ----------
+    readonly property real margin: Math.max(28, width * 0.045)
+    readonly property real coverSize: Math.min(width * 0.24, height * 0.44)
+    readonly property int fontSize: 16 + lyricSize
+    readonly property real lyricTime: position + lyricMove
+
+    // ---------- 背景：主色渐变 + 压暗，保证歌词可读 ----------
+    Rectangle {
+        anchors.fill: parent
+        gradient: Gradient {
+            GradientStop { position: 0.0; color: Qt.darker(root.mainColor, 2.6) }
+            GradientStop { position: 0.5; color: Qt.darker(root.secondColor, 2.8) }
+            GradientStop { position: 1.0; color: Qt.darker(root.thirdColor, 2.0) }
+        }
+    }
+    Rectangle {
+        anchors.fill: parent
+        color: "#77000000"
     }
 
-    Behavior on hideHeight { NumberAnimation { duration: 480; easing.type: Easing.OutExpo } }
+    // ---------- 左：封面 + 歌曲名 / 歌手名 ----------
+    Column {
+        id: leftPane
+        x: root.margin
+        width: Math.min(root.width * 0.3, root.coverSize * 1.6)
+        anchors.verticalCenter: parent.verticalCenter
+        spacing: 20
 
-    function escapeHtml(text) {
-        return String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        Item {
+            id: coverBox
+            anchors.horizontalCenter: parent.horizontalCenter
+            width: root.coverSize
+            height: root.coverSize
+
+            // 圆角封面：Image 当源，MultiEffect 用圆角矩形做遮罩
+            Image {
+                id: coverSource
+                anchors.fill: parent
+                visible: false
+                source: root.coverUrl
+                sourceSize: Qt.size(512, 512)
+                fillMode: Image.PreserveAspectCrop
+                asynchronous: true
+            }
+            Rectangle {
+                id: coverMask
+                anchors.fill: parent
+                radius: 18
+                color: "#ff000000"
+                visible: false
+                layer.enabled: true
+            }
+            MultiEffect {
+                anchors.fill: parent
+                source: coverSource
+                maskEnabled: true
+                maskSource: coverMask
+                maskThresholdMin: 0.5
+                maskSpreadAtMin: 1.0
+            }
+        }
+
+        Column {
+            width: parent.width
+            spacing: 6
+
+            Text {
+                id: titleText
+                width: parent.width
+                text: root.title
+                color: "#f2f2f2"
+                elide: Text.ElideRight
+                horizontalAlignment: Text.AlignHCenter
+                font.pixelSize: Math.max(18, root.fontSize * 1.1)
+                font.bold: true
+            }
+            Text {
+                width: parent.width
+                text: root.artist
+                color: "#b0b0b0"
+                elide: Text.ElideRight
+                horizontalAlignment: Text.AlignHCenter
+                font.pixelSize: Math.max(13, root.fontSize * 0.72)
+            }
+        }
     }
 
-    // 逐字高亮：只处理当前行，info 里每个词带自己的时间
-    function lineHtml(line, pos) {
+    // ---------- 右：歌词列表 ----------
+    ListView {
+        id: lyricView
+        x: leftPane.x + leftPane.width + root.margin
+        width: root.width - x - root.margin
+        height: root.height
+        clip: true
+        reuseItems: true
+        model: root.lyricsModel
+        currentIndex: root.currentIndex
+        highlightMoveDuration: 280
+        highlightRangeMode: ListView.ApplyRange
+        preferredHighlightBegin: height * 0.42
+        preferredHighlightEnd: height * 0.58
+        boundsBehavior: Flickable.StopAtBounds
+        cacheBuffer: height
+
+        delegate: Item {
+            id: line
+            required property var modelData
+            required property int index
+
+            readonly property bool isCurrent: index === root.currentIndex
+            readonly property bool hasTranslate: root.openTranslate
+                                                 && index < root.translateModel.length
+                                                 && (root.translateModel[index].text || "") !== ""
+
+            width: lyricView.width
+            height: lineText.height + (hasTranslate ? transText.height + 6 : 0) + 20
+
+            Text {
+                id: lineText
+                width: parent.width
+                // 只有当前行用富文本做逐字高亮：其余行保持纯文本，开销可控
+                textFormat: line.isCurrent ? Text.RichText : Text.PlainText
+                text: line.isCurrent ? root.lineHtml(line.modelData, root.lyricTime)
+                                     : (line.modelData.text || "")
+                color: line.isCurrent ? "#ffffff" : "#8a8a8a"
+                wrapMode: Text.Wrap
+                font.pixelSize: line.isCurrent ? root.fontSize * 1.2 : root.fontSize
+                font.bold: line.isCurrent
+                opacity: line.isCurrent ? 1.0 : 0.75
+                Behavior on opacity { NumberAnimation { duration: 180 } }
+                Behavior on font.pixelSize { NumberAnimation { duration: 180 } }
+            }
+
+            Text {
+                id: transText
+                anchors.top: lineText.bottom
+                anchors.topMargin: 4
+                width: parent.width
+                visible: line.hasTranslate
+                text: line.hasTranslate ? root.translateModel[line.index].text : ""
+                color: "#9a9a9a"
+                elide: Text.ElideRight
+                font.pixelSize: root.fontSize * 0.8
+            }
+        }
+    }
+
+    // 没有歌词（纯音乐 / 还没拿到）时给一句提示
+    Text {
+        x: lyricView.x
+        y: root.height * 0.45
+        width: lyricView.width
+        visible: root.lyricsModel.length === 0
+        text: root.title + (root.artist ? "  ·  " + root.artist : "")
+        color: "#d8d8d8"
+        elide: Text.ElideRight
+        horizontalAlignment: Text.AlignHCenter
+        font.pixelSize: root.fontSize
+    }
+
+    // ---------- 逐字高亮（只处理当前行）----------
+    // info 里每个词带自己的时间；已唱的部分用主题色，未唱用灰色
+    function lineHtml(line: var, pos: real): string {
         if (!line)
             return "";
         const words = line.info || [];
         if (words.length === 0)
             return escapeHtml(line.text || "");
-        const hex = mainColor.toString().replace("#", "");
-        const sung = "#" + hex.substring(hex.length - 6);   // 已唱：主题色
+        const sung = "#" + root.mainColor.toString().slice(-6);
         let html = "";
-        for (let i = 0; i < words.length; i++) {
-            const color = pos >= words[i].time ? sung : "#a8a8a8";
+        for (let i = 0; i < words.length; ++i) {
+            const color = pos >= words[i].time ? sung : "#9a9a9a";
             html += "<font color=\"" + color + "\">" + escapeHtml(words[i].text || "") + "</font>";
         }
         return html;
     }
 
-    // ---------- 背景：插件自带的着色器 ----------
-    ShaderEffect {
-        anchors.fill: parent
-        property color uColorA: root.mainColor
-        property color uColorB: root.secondColor
-        property color uColorC: root.thirdColor
-        property vector2d uResolution: Qt.vector2d(width, height)
-        property real uEnergy: root.playing ? 1.0 : 0.4
-        property real uTime: 0
-        NumberAnimation on uTime {
-            from: 0; to: 1000; duration: 1000000; loops: Animation.Infinite; running: root.visible
-        }
-        fragmentShader: "shaders/wave.frag"
-    }
-    Rectangle { anchors.fill: parent; color: "#88000000" }   // 压暗，保证歌词可读
-
-    // ---------- 歌词 ----------
-    Column {
-        anchors.horizontalCenter: parent.horizontalCenter
-        anchors.verticalCenter: parent.verticalCenter
-        anchors.verticalCenterOffset: -40
-        width: parent.width * 0.78
-        spacing: 16
-
-        Text {
-            width: parent.width
-            horizontalAlignment: Text.AlignHCenter
-            text: root.prevText
-            color: "#a0a0a0"
-            opacity: 0.55
-            elide: Text.ElideRight
-            font.pixelSize: root.fontSize * 0.55
-        }
-        Text {
-            width: parent.width
-            horizontalAlignment: Text.AlignHCenter
-            textFormat: Text.RichText
-            text: root.lineHtml(root.current, root.lyricPos)
-            color: "#ffffff"
-            wrapMode: Text.Wrap
-            font.pixelSize: root.fontSize
-            font.bold: true
-        }
-        Text {
-            width: parent.width
-            horizontalAlignment: Text.AlignHCenter
-            visible: root.openTranslate && root.translateText !== ""
-            text: root.translateText
-            color: "#d0d0d0"
-            opacity: 0.8
-            elide: Text.ElideRight
-            font.pixelSize: root.fontSize * 0.6
-        }
-        Text {
-            width: parent.width
-            horizontalAlignment: Text.AlignHCenter
-            text: root.nextText
-            color: "#a0a0a0"
-            opacity: 0.45
-            elide: Text.ElideRight
-            font.pixelSize: root.fontSize * 0.55
-        }
-    }
-
-    // 纯音乐 / 还没拿到歌词
-    Text {
-        anchors.centerIn: parent
-        visible: !root.current
-        text: root.title + (root.artist ? "  ·  " + root.artist : "")
-        color: "#e0e0e0"
-        font.pixelSize: root.fontSize * 0.7
-    }
-
-    // ---------- 左下角歌曲信息（沉浸模式淡出）----------
-    Column {
-        x: 36
-        anchors.bottom: parent.bottom
-        anchors.bottomMargin: 150 + root.hideHeight
-        opacity: root.hideHeight > 0 ? 0 : 1
-        spacing: 4
-        Behavior on opacity { NumberAnimation { duration: 240 } }
-
-        Text {
-            width: root.width * 0.5
-            text: root.title
-            color: "#f0f0f0"
-            elide: Text.ElideRight
-            font.pixelSize: 18
-            font.bold: true
-        }
-        Text {
-            width: root.width * 0.5
-            text: root.artist
-            color: "#a8a8a8"
-            elide: Text.ElideRight
-            font.pixelSize: 14
-        }
+    function escapeHtml(text: var): string {
+        return String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     }
 }

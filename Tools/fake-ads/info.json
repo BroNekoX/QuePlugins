@@ -1,0 +1,9 @@
+{
+  "apiVersion": 1,
+  "name": "恶搞广告",
+  "author": "QueMusic",
+  "version": "1.0.0",
+  "description": "满屏「1刀999」传奇广告与 VIP 角标：标题栏、底栏、侧栏、整窗覆盖层各塞一份，纯属整活",
+  "entry": "fake-ads.qml",
+  "preview": "assets/ad.jpg"
+}
